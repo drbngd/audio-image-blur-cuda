@@ -1,0 +1,78 @@
+1.  Speedup = 11.1517
+    Full results:
+            CPU time: 145.372 milliseconds
+            GPU time: 13.0358 milliseconds
+
+            Speedup factor: 11.1517
+
+2.  In the audio blur program, both input and output arrays are necessary to avoid incorrect results during convolution.
+
+    Data Dependency: Convolution requires neighboring values to compute new values. If the input array is modified in place,
+    the algorithm will use altered data instead of the original, leading to incorrect results.
+
+    Parallel Processing: In CUDA, multiple threads work concurrently. If they modify the input array in place,
+    race conditions can occur, leading to unpredictable results.
+
+    By separating input and output arrays, we ensure each thread reads unmodified data and writes results safely,
+    ensuring accuracy and avoiding race conditions.
+
+3.  These were the results of increasing the GAUSS_SIZE_WIDTH to 100:
+            ./blur-audio 32 128 resources/example_test.wav resources/example_test_out.wav
+            CPU blurring channel 0...
+            GPU blurring channel 0...
+            gpu_raw_data[0]: 0.000000
+            gpu_blur_v[0]: 0.000000
+            Comparing channel 0...
+            Comparison successful on channel 0
+
+            CPU time: 3092.45 milliseconds
+            GPU time: 46.2028 milliseconds
+
+            Speedup factor: 66.9321
+
+    This macro defines the width of the Gaussian kernel used for convolution. Increasing it means more elements are used in blurring,
+    so we expect the output to be blurrier.
+
+    With respect to performance, a larger width means more elements to process, increasing the number of operations per thread.
+    This is evident from the CPU and GPU times, which have increased significantly with GAUSS_SIZE_WIDTH set to 100.
+
+    However, on physical inspection, I couldn't detect any noticeable difference between the blurred audio with GAUSS_SIZE_WIDTH
+    set to 100 and GAUSS_SIZE_WIDTH set to 10.
+
+4.  Name for image_blur function: _Z10image_blurP6uchar4S0_
+    Memory load instruction to index the array: ld.global.v4.u8
+
+    Using __restrict__ doesn't change my ld instruction.
+
+    Using __ldg changed my ld instruction to ld.global.nc.v4.u8.
+
+
+    If we use const and __ldg, we get no difference. The ld instruction remains ld.global.nc.v4.u8.
+    If we use just const (without __ldg), we get ld.global.v4.u8.
+
+
+5.  For a grayscale filter, we can calculate the average of the Red, Green, and Blue (RGB) values of a pixel and
+    then assign that average back to each of the R, G, and B channels. This effectively removes color information,
+    as all channels will have the same value.
+
+    Here is the code for that kernel, and it has been verified as well:
+        __global__ void image_grayscale(uchar4 *image, uchar4 *image_output) {
+
+        /* compute index */
+        uint i = blockIdx.x * blockDim.x + threadIdx.x;
+        uint j = blockIdx.y * blockDim.y + threadIdx.y;
+        int idx = i + j * IMAGE_DIM;
+
+        /* check if index within bounds */
+        if (i >= IMAGE_DIM || j >= IMAGE_DIM) { return; }
+
+        /* get current RGB values */
+        uchar4 pixel = image[idx];
+
+        /* apply grayscale filter */
+        unsigned char gray = (unsigned char)((pixel.x + pixel.y + pixel.z) / 3);
+
+        /* store results */
+        image_output[idx] = make_uchar4(gray, gray, gray, 255);
+
+        }
